@@ -1,85 +1,65 @@
-# psa_car_controller pour QNAP ARM 32K (ARMv7)
-# Basé sur flobz/psa_car_controller master avec correctif page-size 32K
-# Correctif clé : LDFLAGS=-Wl,-z,max-page-size=32768 + recompile from source
+# ============================================================
+# Stage 1 : build de psa-car-controller sur Alpine 3.17 ARMv7
+# ============================================================
+FROM --platform=linux/arm/v7 alpine:3.17 AS builder
 
-ARG PSACC_VERSION="3.6.3"
-ARG DEBIAN_FRONTEND=noninteractive
+# Pour QNAP 32K, on reste en musl/Alpine 3.17 (testé OK sur TS-231P3) [web:115]
+ENV PSACC_VERSION=${PSACC_VERSION:-3.6.3}
+ENV PYTHONUNBUFFERED=1
 
-# ============================================================================
-# STAGE 1 : Builder - Compilation avec LDFLAGS 32K page-size
-# ============================================================================
-FROM --platform=linux/arm/v7 debian:bookworm-slim AS builder
+RUN apk add --no-cache \
+      python3 \
+      python3-dev \
+      py3-pip \
+      build-base \
+      linux-headers \
+      git \
+      openssl-dev \
+      libffi-dev \
+      musl-dev
 
-ARG PSACC_VERSION
+# Upgrade pip + wheel
+RUN python3 -m pip install --no-cache-dir --upgrade pip wheel setuptools
 
-# CRITICAL : LDFLAGS pour forcer une page-size ELF de 32K
-# C'est LE correctif clé pour QNAP ARM 32KB pagesize (segmentation fault fix)
-ENV LDFLAGS="-Wl,-z,max-page-size=32768"
+# Installation de psa-car-controller depuis PyPI
+# (on laisse pip décider des wheels / builds adaptés à Alpine/musl) [web:43][web:26]
+RUN python3 -m pip install --no-cache-dir \
+      "psa-car-controller==${PSACC_VERSION}"
 
-ARG PYTHON_DEP='python3 python3-wheel python3-typing-extensions python3-pandas python3-six python3-dateutil python3-brotli python3-pycryptodome libatlas3-base python3-cryptography python3-scipy androguard python3-flask python3-paho-mqtt python3-ruamel.yaml ca-certificates python3-numpy'
+# ============================================================
+# Stage 2 : image finale runtime Alpine 3.17 ARMv7
+# ============================================================
+FROM --platform=linux/arm/v7 alpine:3.17
 
-# Installation build-essentials et dépendances
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-pip \
-    python3-setuptools \
-    python3-dev \
-    libblas-dev \
-    liblapack-dev \
-    gfortran \
-    libffi-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    make \
-    automake \
-    gcc \
-    g++ \
-    subversion \
-    ninja-build \
-    $PYTHON_DEP && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+ENV PSACC_VERSION=${PSACC_VERSION:-3.6.3}
+ENV PYTHONUNBUFFERED=1
 
-# Upgrade pip/wheel/setuptools
-RUN pip3 install --break-system-packages --upgrade pip wheel setuptools
+# Runtime minimal
+RUN apk add --no-cache \
+      python3 \
+      py3-pip \
+      tzdata \
+      ca-certificates
 
-# Installation depuis PyPI en recompilant from source (LDFLAGS actif)
-# --no-binary :all: force la recompilation des extensions C natives (numpy, scipy, pandas...)
-RUN pip3 install --break-system-packages --no-cache-dir --no-binary :all: psa-car-controller==${PSACC_VERSION}
+# Copie de l’environnement Python construit dans le stage builder
+COPY --from=builder /usr/lib/python3.10 /usr/lib/python3.10
+COPY --from=builder /usr/bin/psa-car-controller /usr/bin/psa-car-controller
+COPY --from=builder /usr/bin/python3 /usr/bin/python3
+COPY --from=builder /usr/bin/pip3 /usr/bin/pip3
 
-EXPOSE 5000
-# ============================================================================
-# STAGE 2 : Image finale minimale
-# ============================================================================
-FROM --platform=linux/arm/v7 debian:bookworm-slim
-
-ARG PYTHON_DEP='python3 python3-wheel python3-typing-extensions python3-pandas python3-six python3-dateutil python3-brotli python3-pycryptodome libatlas3-base python3-cryptography python3-scipy androguard python3-flask python3-paho-mqtt python3-ruamel.yaml ca-certificates python3-numpy'
+# Copie du script d’init
+COPY init.sh /init.sh
+RUN sed -i 's/\r$//' /init.sh && chmod +x /init.sh
 
 WORKDIR /config
 
-ENV PSACC_BASE_PATH=/ \
-    PSACC_PORT=5000 \
+EXPOSE 5000
+
+# Variables par défaut (surchageables via docker-compose) [web:26]
+ENV PSACC_PORT=5000 \
+    PSACC_BASE_PATH=/ \
     PSACC_OPTIONS="-c -r --web-conf" \
-    PSACC_CONFIG_DIR="/config" \
-    PYTHONPATH="/app" \
-    # Desactive jemalloc qui cause des segfault sur 32K
+    PSACC_CONFIG_DIR=/config \
     MALLOC_CHECK_=0
 
-# Copier depuis le builder les libs installées
-COPY --from=builder /var/lib/apt /var/lib/apt
-COPY --from=builder /var/cache/apt/ /var/cache/apt/
-COPY --from=builder /usr/local/lib /usr/local/lib
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
-
-# Installer les dépendances runtime
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends $PYTHON_DEP curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Script init
-COPY init.sh /init.sh
-RUN chmod +x /init.sh
-
-CMD ["/init.sh"]
+ENTRYPOINT ["/init.sh"]
