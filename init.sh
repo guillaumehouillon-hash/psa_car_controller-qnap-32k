@@ -1,10 +1,9 @@
-#!/bin/bash
+#!/bin/sh
 # Init script pour psa_car_controller - version QNAP ARM 32K
-# Compatible avec les dispositifs QNAP utilisant une page-size kernel de 32KB
 
-echo " psa_car_controller (QNAP ARM 32K) loading..."
+echo "psa_car_controller (QNAP ARM 32K) : loading..."
 echo "MALLOC_CHECK_=$MALLOC_CHECK_"
-echo "LDFLAGS=$LDFLAGS"
+echo "PSACC_CONFIG_DIR=$PSACC_CONFIG_DIR"
 
 cd "$PSACC_CONFIG_DIR"
 
