@@ -1,0 +1,46 @@
+name: Build and Push QNAP ARM 32K Image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: guillaumehouillon-hash/psa_car_controller_gh
+  PSACC_VERSION: "3.6.3"
+
+jobs:
+  build-qnap-armv7:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push for ARMv7 (QNAP 32K)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm/v7
+          push: true
+          build-args: |
+            PSACC_VERSION=${{ env.PSACC_VERSION }}
+            LDFLAGS=-Wl,-z,max-page-size=32768
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ env.PSACC_VERSION }}
+            ${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
